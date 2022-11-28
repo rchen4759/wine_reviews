@@ -1,0 +1,457 @@
+---
+title: "Missing Data Final Project"
+author: "Rachel Chen"
+date: "3/13/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview of Data
+
+### My dataset consists of wine reviews scraped from WineEnthusiast in June 2017. The data was downloaded from the website Kaggle which included details on each of the variables as well as an overview of the context and inspiration for creation of the dataset. In total, there are 150,930 rows and 11 variables in the dataset. 
+
+### The first column is the variable that was named "...1" which numbers each row or wine review in ascending order. Next, there are 8 character variables for the country of origin, a description, the designation which is the vineyard in the winery where the grapes are from, the province or state that the wine is from, the region_1 variable which is the name of the wine growing area within the province or state, the region_2 variable for if there is a more specific region name given for the wine growing area, the variety or types of grapes used, and the name of the winery that produced the wine. There is 1 numerical variable for the wine rating named as the 'points' column, which are the number of points given to each wine rated by WineEnthusiast from a scale of 1 to 100. Then, the last variable is the 'price' column which is the cost for a bottle of the wine. As for missing data, there are missing values in the country, designation, price, province, region_1, and region_2 variables for a total of 174,477 missing cases. This means that intially, about 10.5% of the dataset is missing. The rest of the variables, including the points variable, are fully observed.
+
+### The initial analysis I was interested in was to use linear regression to look at the relationship between wine prices and the rest of the variables. I wanted to see whether wine origin, region, variety, rating, etc. were more associated with higher wine prices and how these associations compared from implementing different methods of dealing with missing data. An important point to note is that the dataset only included wine ratings on the higher end of the scale. The Kaggle page where the data was obtained had mentioned that WineEnthusiast only posted ratings 80 and above on their site. Therefore in the data, the ratings only ranged from 80 to 100 with an average rating of 88 points. Nonetheless, I felt that this was still a sufficient range of ratings to perform the analysis given that there were a large variety of wines included from different regions, countries, and prices. 
+
+### Upon further inspection of the data, there were various factors that affected the final analysis that I decided on. First, the "...1" variable did not need to be included since it only numbered the wine reviews and did not provide actual information on each wine. Next, the description variable was all text data which would primarily involve text analysis. I excluded this variable since it fell outside of the scope of the course and the focus of my analysis. I also decided to exclude the designation, province, region_1, variety, and winery variables from my analysis because these variables had a large number of categories. For example, the designation column had over 30,000 categories and the variety column had over 600 unique values for the different varieties of wine. The region_2 variable with 19 different levels had to be excluded as well since it was dependent on the region_1 variable. Additionally, given that the country variable had over 40 different unique values, I created a new variable re-categorizing it based on whether the wine was from the "US" or "International". Over 40% of the wines were from the US, so it made sense to divide up the dataset into these two categories. 
+
+### The final analysis I decided on was to fit a linear regression model on the dataset with prices as the response variable and the new country variable and points as the predictors. The new country variable and prices had missing values, so the various missing data imputation methods were performed on these two variables. My guess for the dataset was that higher wine ratings were associated with higher wine prices. A regression analysis would help to better understand whether my assumption was true and whether domestic or international wines were related to wine prices as well. Implementing various mechanisms for resolving the missing data will allow me to compare different regression models to find the best one with lower standard error.
+
+## Libraries and Data
+```{r message=FALSE, warning=FALSE}
+# load all libraries
+library(tidyverse)
+library(VIM)
+library(mice)
+library(mi)
+library(lattice)
+
+# load dataset
+wine_full <- read_csv('winemag-data_first150k.csv')
+
+## pre-analysis ##
+# select relevant variables for analysis
+wine <- wine_full %>%
+  select(country, price, points)
+
+# find percentage of dataset with US wines
+nrow(wine %>% filter(country == 'US'))/nrow(wine)
+
+# recategorize country variable as US or International
+wine <- wine %>% 
+  mutate(USvIntl = factor(ifelse(country == "US","US","International"))) %>% 
+  select(-country)
+
+```
+
+## 1. Provide some plots and summary statistics, like percent missing per variable, percent complete cases, and so on
+```{r}
+# first few rows and summary of data
+head(wine)
+summary(wine)
+
+# plots for each missing variable
+par(mfrow = c(1,2))
+ggplot(wine, aes(x = price)) +
+  geom_histogram() +
+  labs(x = "Price", y = "Frequency",
+       title = "Price")
+
+ggplot(wine, aes(x = USvIntl)) +
+  geom_bar() +
+    labs(y = "Frequency",
+       title = "Wine Origin")
+
+# percent missing for each variable
+n <- nrow(wine)
+
+sum(is.na(wine$USvIntl))/n
+sum(is.na(wine$price))/n
+sum(is.na(wine$points))/n
+
+# total percent missing
+sum(is.na(wine))/(n*3)
+
+# percent complete cases for each variable
+sum(complete.cases(wine$USvIntl))/n
+sum(complete.cases(wine$price))/n
+sum(complete.cases(wine$points))/n
+
+# total percent complete cases 
+sum(complete.cases(wine))/(n*3)
+
+```
+
+## 2. Listwise deletion
+### Method of resolving missing observations by removing all missing values from the dataset
+```{r}
+# perform listwise deletion
+wine.ld <- na.omit(wine)
+
+# run regression analysis
+lm.ld <- lm(price ~ points + USvIntl, data = wine.ld)
+summary(lm.ld)
+
+# make scatterplot of price against points
+ggplot(data = wine.ld, aes(x = points, y = price, color = USvIntl)) +
+  geom_point() + 
+  labs(x = "Rating", y = "Price (per bottle)",
+       title = "Wine Price vs. Rating with Listwise Deletion",
+       color = "Origin")
+
+```
+
+### No issues were encountered with listwise deletion. The equation from the linear regression model was prices = -422.3 + 5.2*points + 0.7*USvIntl2.
+
+## 3. Mean/mode imputation
+### Imputing missing values with the mean or mode of the variable
+```{r}
+# mean imputation function
+mean.imp <- function (x){
+  missing <- is.na(x)
+  x.obs <- x[!missing]
+  imputed <- x
+  imputed[missing] <- mean(x.obs)
+  return (imputed)
+}
+
+# impute mean for numerical variable: price
+wine.mean.mode.imp <- wine
+wine.mean.mode.imp$price <- mean.imp(wine.mean.mode.imp$price)
+
+# mode imputation function
+mode.imp <- function (a)
+{
+ missing <- is.na(a)
+ a.obs <- a[!missing]
+ imputed <- a
+ imputed[missing] <- mode(a.obs)
+ return (imputed)
+}
+
+# impute mode for categorical variable: USvIntl
+wine.mean.mode.imp$USvIntl <- mode.imp(wine.mean.mode.imp$USvIntl)
+
+# run regression analysis
+lm.mm.imp <- lm(price ~ points + USvIntl, data = wine.mean.mode.imp)
+summary(lm.mm.imp)
+
+```
+
+### I did not encounter any issues with mean/mode imputation. The equation from the linear regression model was prices = -382 + 4.7*points + 1.4*USvIntl2.
+
+## 4. Random Imputation
+### Replacing missing values with random values drawn from the empirical distribution
+```{r}
+set.seed(123)
+
+# random imputation function
+random.imp <- function (a)
+{
+  missing <- is.na(a)
+  n.missing <- sum(missing)
+  a.obs = a[!missing]
+  imputed <- a
+  imputed[missing] <- sample (a.obs, n.missing, replace=TRUE)
+  return (imputed)
+}
+
+# perform random imputation
+wine.random.imp <- wine
+wine.random.imp$price <- random.imp(wine.random.imp$price)
+wine.random.imp$USvIntl <- random.imp(wine.random.imp$USvIntl)
+
+# run regression analysis
+lm.rand.imp <- lm(price ~ points + USvIntl, data = wine.random.imp)
+summary(lm.rand.imp)
+
+```
+
+### No issues were encountered with using random imputation on the dataset. The equation from the linear regression model was prices = -380.8 + 4.7*points + 1.5*USvIntl2.
+
+## 5. LVCF
+### The last value carried forward method was not implemented since my dataset was not longitudinal data.
+
+## 6. Hotdecking (nearest neighbor) with VIM package
+### Filling in missing values based on similar values for the observed variables in the dataset
+```{r}
+set.seed(333)
+
+# run hotdecking
+wine.hotdeck <- wine
+wine.hotdeck <- hotdeck(wine.hotdeck)
+
+# run regression analysis
+lm.hotdeck <- lm(price ~ points + USvIntl, data = wine.hotdeck)
+summary(lm.hotdeck)
+
+```
+
+### No issues were encountered with implementing hotdecking on the dataset. The equation from the linear regression model was prices = -381.9 + 4.7*points + 1.4*USvIntl2.
+
+## 7. Regression Imputation
+### Fitting a regression model to predict missing values based on the complete cases
+```{r}
+set.seed(2048)
+
+# perform regression imputation on numerical variable price based on fully 
+# observed points
+wine.reg.imp <- wine
+fit <- lm(price ~ points, data = wine.reg.imp)
+
+# predict missing values for price
+reg.imp <- predict(fit, newdata = ic(data.frame(wine.reg.imp)))
+
+# impute predicted values for price
+wine.reg.imp$price[is.na(wine.reg.imp$price)] = reg.imp
+
+# perform logistic regression on dichotomous variable USvIntl based 
+# on fully observed points variable
+
+# convert USvIntl to numeric, divided by complete cases and missing cases
+country <- as.numeric(!is.na(wine.reg.imp$USvIntl))
+country.cc <- wine.reg.imp[country == 1, ]
+country.dropped <- wine.reg.imp[country == 0, ]
+
+# fit logistic regression model based on complete cases
+glm.fit <- glm(USvIntl ~ points, data = country.cc, family = "binomial")
+
+# predict missing values for USvIntl
+glm.imp <- predict(glm.fit, newdata = country.dropped, type = "response") 
+
+# impute predicted values
+wine.reg.imp$USvIntl[country == 0] = ifelse(round(glm.imp, 0) == 0,
+                                            "International", "US")
+
+# run regression analysis
+lm.reg.imp <- lm(price ~ points + USvIntl, data = wine.reg.imp)
+summary(lm.reg.imp)
+
+```
+
+### A small issue I ran into with using regression imputation was with imputing the predicted values for the dichotomous categorical variable USvIntl based on the fitted logistic regression model. Since the variable's values could only be as a string either as "US" or "International", I was not certain which of the values would convert to a 0 or 1 based on the rounded predicted probabilities. After inspecting the variable further, I realized that "International" was set as the reference category and that predicted probabilities of 0 could be imputed for any of these values. The equation from the linear regression model was prices = -402.2 + 5.0*points + 0.6*USvIntl2.
+
+## 8. Regression imputation with noise on all variables (numerical, dichotomous and multinomial).
+### Building a regression model with an error term randomly drawn from the normal distribution to predict missing values based on the observed variables 
+```{r}
+set.seed(111)
+
+# perform regression imputation with noise on numerical variable price based on
+# fully observed points variable
+wine.reg.imp.n <- wine
+fit.n <- lm(price ~ points, data = wine.reg.imp.n)
+
+# predict imputed values for price
+reg.imp.n <- predict(fit.n, newdata = ic(data.frame(wine.reg.imp.n)))
+
+# add noise
+noise <- rnorm(length(reg.imp.n), 0, summary(fit.n)$sigma)
+total.imp <- reg.imp.n + noise
+
+# replace missing values with imputed values plus noise
+wine.reg.imp.n$price[is.na(wine.reg.imp.n$price)] = total.imp
+
+# perform logistic regression with noise on dichotomous variable USvIntl based 
+# on fully observed points variable
+
+# convert USvIntl to numeric, divided by complete cases and missing cases
+country.n <- as.numeric(!is.na(wine.reg.imp.n$USvIntl))
+country.cc.n <- wine.reg.imp.n[country.n == 1, ]
+country.dropped.n <- wine.reg.imp.n[country.n == 0, ]
+
+# fit logistic regression model based on complete cases
+glm.fit.n <- glm(USvIntl ~ points, data = country.cc.n, family = "binomial")
+
+# predict missing values for USvIntl
+glm.imp.n <- predict(glm.fit.n, newdata = country.dropped.n, type = "response") 
+
+# impute predicted values
+wine.reg.imp.n$USvIntl[country.n == 0] = ifelse(rbinom(sum(country.n == 0), 1,
+                                                       glm.imp.n) == 0,
+                                                "International", "US")
+
+# run regression analysis
+lm.reg.imp.n <- lm(price ~ points + USvIntl, data = wine.reg.imp.n)
+summary(lm.reg.imp.n)
+
+```
+
+### I did not encounter any issues with implementing regression imputation noise on the variables in the dataset. The equation from the regression model came out to be prices = -401.9 + 5.0*points + 0.6*USvIntl2.
+
+## 9-16. Multiple imputation with either mice OR mi package:
+### Creating and combining several imputed datasets based on the observed variables to impute missing values
+```{r}
+set.seed(0101)
+
+# load data into package
+wine.mult.imp <- wine
+
+# get summary and graphs of data and missing patterns
+summary(wine.mult.imp)
+md.pattern(wine.mult.imp, rotate.names = T) 
+flux(wine.mult.imp)
+fluxplot(wine.mult.imp)
+
+# run mice command and check trace plots 
+imp <- mice(wine.mult.imp, seed = 1, print = F)
+summary(imp)
+plot(imp)
+
+# increase imputations, iterations, etc.
+imp2 <- mice(wine.mult.imp, seed = 1, maxit = 50, m = 10, print = F)
+summary(imp2)
+plot(imp2) 
+
+# plot diagnostics
+xyplot(imp2, price ~ points + USvIntl, pch=18)
+
+# run pooled analysis
+mice.fit2 <- with(imp2, lm(price ~ points + USvIntl))
+mice::pool(mice.fit2)
+summary(mice::pool(mice.fit2))
+
+#------------------------------------------------------------------------------#      
+## additional code for other methods that did not improve the model ##
+
+## increase imputations and iterations to improve fmi ##
+# imp3 <- mice(wine.mult.imp, seed = 1, maxit = 20, m = 100, print = F)
+# summary(imp3)
+# plot(imp3) 
+
+# pool data and check fmi
+# mice.fit3 <- with(imp3, lm(price ~ points + USvIntl))
+# mice::pool(mice.fit3)
+# summary(mice::pool(mice.fit3))
+
+## use mi package ##
+# mdf <- missing_data.frame(as.data.frame(wine))
+# show(mdf)
+
+# change price to positive type
+# mdf <- change(mdf, y = c("price"), what = "type", to = "pos")
+# show(mdf)
+
+# run mi command and check convergence by traceplots
+# imp <- mi(mdf, parallel = T)
+
+# (converged <- mi2BUGS(imp))
+# mean.price <- converged[, , 1]
+# mean.us <- converged[, , 2]
+
+# ts.plot(mean.price[,1], col=1)
+# lines(mean.price[,2], col= 2)
+# lines(mean.price[,3], col= 3)
+# lines(mean.price[,4], col= 4)
+
+# ts.plot(mean.us[,1], col=1)
+# lines(mean.us[,2], col= 2)
+# lines(mean.us[,3], col= 3)
+# lines(mean.us[,4], col= 4)
+
+# check r-hats
+# Rhats(imp)
+
+# try using pmm to impute
+# mdf <- change(mdf, y = c("price"), what = "imputation_method", to = "pmm")
+# show(mdf)
+
+# run chains and check convergence
+# imp.pmm <- mi(mdf, seed = 124, parallel = T, verbose = T)
+# plot(imp.pmm)
+
+# (converged <- mi2BUGS(imp.pmm))
+# mean.price <- converged[, , 1]
+# mean.us <- converged[, , 2]
+# 
+# ts.plot(mean.price[,1], col=1)
+# lines(mean.price[,2], col= 2)
+# lines(mean.price[,3], col= 3)
+# lines(mean.price[,4], col= 4)
+# 
+# ts.plot(mean.us[,1], col=1)
+# lines(mean.us[,2], col= 2)
+# lines(mean.us[,3], col= 3)
+# lines(mean.us[,4], col= 4)
+
+```
+
+### I discovered that I encountered the most issues when it came to using multiple imputation. To deal with the missingness in the price variable, I used the mice package to try out many different models, increasing the number of iterations and imputations and checking the fmi each time. Despite increasing the number of imputations to 100 and increasing the number of iterations, the results still showed extremely high percentages for fmi that were not near 1%. Next, I tried using the mi package to try changing the price variable to positive-continuous type and did not see improvements in the traceplots. As a last resort, I used pmm for imputation and unfortunately, still did not see positive changes in the results.
+
+### In the end, I decided to use the results from using the mice package with 50 iterations and 10 imputations. I found that increasing the iterations and imputations after this did not make much of a difference in the coefficients, standard errors, or fmi. The final equation from the results of using multiple imputation was price = -447.8 + 5.5*points + 0.2*USvIntl2. I have included additional code showing the different methods I tried. It has been commented out and hides the results from each method, or else the rmd file will time out and be unable to knit.
+
+## 17. Prepare a table with results from all imputation methods.
+```{r}
+# table of coefficients for each variable
+coefs <- data.frame(summary(lm.ld)$coefficients[,1], summary(lm.mm.imp)$coefficients[,1],
+      summary(lm.rand.imp)$coefficients[,1], summary(lm.hotdeck)$coefficients[,1],
+      summary(lm.reg.imp)$coefficients[,1], summary(lm.reg.imp.n)$coefficients[,1],
+      summary(mice::pool(mice.fit2))[,2])
+
+# assign column names to table 
+colnames(coefs) <- c("Listwise Deletion", "Mean/Mode Imputation", "Random Imputation",
+                 "Hotdecking", "Regresson Imputation",
+                 "Regression Imputation with Noise", "Multiple Imputation")
+
+# table of standard errors for each variable
+se <- data.frame(summary(lm.ld)$coefficients[,2], summary(lm.mm.imp)$coefficients[,2],
+      summary(lm.rand.imp)$coefficients[,2], summary(lm.hotdeck)$coefficients[,2],
+      summary(lm.reg.imp)$coefficients[,2], summary(lm.reg.imp.n)$coefficients[,2],
+      summary(mice::pool(mice.fit2))[,3])
+
+# assign column names to table
+colnames(se) <- c("Listwise Deletion", "Mean/Mode Imputation", "Random Imputation",
+                 "Hotdecking", "Regresson Imputation", "Regression Imputation with Noise",
+                 "Multiple Imputation")
+
+# combine tables and assign row names
+full_table <- full_join(coefs, se)
+rownames(full_table) <- c("Intercept", "points", "USvIntl", "Intercept SE", "points SE", "USvIntl SE")
+full_table
+
+```
+
+## 18. Discuss and compare to original data in terms of average percent change in coefficients and SE
+```{r}
+# calculate average % change in coefficients for each method compared to
+# listwise deletion
+coef.change <- data.frame(rbind(mean(abs(lm.ld$coef - lm.mm.imp$coef)/abs(lm.ld$coef)),
+                      mean(abs(lm.ld$coef - lm.rand.imp$coef)/abs(lm.ld$coef)),
+                      mean(abs(lm.ld$coef - lm.hotdeck$coef)/abs(lm.ld$coef)),
+                      mean(abs(lm.ld$coef - lm.reg.imp$coef)/abs(lm.ld$coef)),
+                      mean(abs(lm.ld$coef - lm.reg.imp.n$coef)/abs(lm.ld$coef)),
+                      mean(abs(lm.ld$coef - summary(mice::pool(mice.fit2))[,2])/abs(lm.ld$coef))))
+
+se.change <- data.frame(rbind(
+  mean(abs(summary(lm.ld)$coefficients[,2] - summary(lm.mm.imp)$coefficients[,2])/abs(lm.ld$coef)),
+  mean(abs(summary(lm.ld)$coefficients[,2] - summary(lm.rand.imp)$coefficients[,2])/abs(lm.ld$coef)),
+  mean(abs(summary(lm.ld)$coefficients[,2] - summary(lm.hotdeck)$coefficients[,2])/abs(lm.ld$coef)),
+  mean(abs(summary(lm.ld)$coefficients[,2] - summary(lm.reg.imp)$coefficients[,2])/abs(lm.ld$coef)),
+  mean(abs(summary(lm.ld)$coefficients[,2] - summary(lm.reg.imp.n)$coefficients[,2])/abs(lm.ld$coef)),
+  mean(abs(summary(lm.ld)$coefficients[,2] - summary(mice::pool(mice.fit2))[,3])/abs(lm.ld$coef))))
+
+avg.change.table <- cbind(coef.change, se.change)
+colnames(avg.change.table) <- c("Average % Change in Coefficients","Average % Change in SE")
+rownames(avg.change.table) <- c("Mean/Mode Imputation", "Random Imputation",
+                           "Hotdecking", "Regresson Imputation",
+                           "Regression Imputation with Noise",
+                           "Multiple Imputation")
+
+avg.change.table
+
+```
+
+### Based on the compiled results from the tables above, the estimates from mean/mode imputation, random imputation, and hotdecking resulted in similar estimates for each of the variables. The standard errors were fairly similar as well. The regression imputation and regression imputation with noise had similar estimates for the intercept and points coefficient and also similarities between the standard errors. In addition, the mean/mode imputation and regression imputation methods ended up having the smallest standard errors overall in comparison to the other methods. 
+
+### In terms of the average percent change in coefficients, I compared the coefficients for each method to the results from listwise deletion. Mean/mode imputation, random imputation, and hotdecking all had the greatest differences in the estimates, while regression imputation and regression imputation with noise had the smallest differences. Furthermore, multiple imputation had the greatest average percent change in standard error. Hotdecking and regression imputation with noise had similar average percent changes in standard errors, but random imputation had the smallest change overall. After reviewing these results across the different imputation methods, I concluded that regression imputation with noise appeared to be the best method. It not only showed a small percent change in the coefficients, but also low standard errors and average change in standard errors in comparison to the other imputation methods. Regression imputation with noise proved to be the most effective in imputing the missing values in the dataset of wine reviews.
+
+
+
+
+
+
+
+
